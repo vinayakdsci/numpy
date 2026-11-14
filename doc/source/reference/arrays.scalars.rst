@@ -65,10 +65,10 @@ Some of the scalar types are essentially equivalent to fundamental
 Python types and therefore inherit from them as well as from the
 generic array scalar type:
 
-====================  ===========================  =============
+====================  ===========================  =========
 Array scalar type     Related Python type          Inherits?
-====================  ===========================  =============
-:class:`int_`         :class:`int`                 Python 2 only
+====================  ===========================  =========
+:class:`int_`         :class:`int`                 no
 :class:`double`       :class:`float`               yes
 :class:`cdouble`      :class:`complex`             yes
 :class:`bytes_`       :class:`bytes`               yes
@@ -76,7 +76,7 @@ Array scalar type     Related Python type          Inherits?
 :class:`bool_`        :class:`bool`                no
 :class:`datetime64`   :class:`datetime.datetime`   no
 :class:`timedelta64`  :class:`datetime.timedelta`  no
-====================  ===========================  =============
+====================  ===========================  =========
 
 The :class:`bool_` data type is very similar to the Python
 :class:`bool` but does not inherit from it because Python's
@@ -86,9 +86,9 @@ Python Boolean scalar.
 
 .. warning::
 
-   The :class:`int_` type does **not** inherit from the
-   :class:`int` built-in under Python 3, because type :class:`int` is no
-   longer a fixed-width integer type.
+   The :class:`int_` type does **not** inherit from the built-in
+   :class:`int`, because type :class:`int` is not a fixed-width
+   integer type.
 
 .. tip:: The default data type in NumPy is :class:`double`.
 
@@ -189,31 +189,35 @@ Inexact types
    `format_float_positional` and `format_float_scientific`.
 
    This means that variables with equal binary values but whose datatypes are of
-   different precisions may display differently::
+   different precisions may display differently:
 
-       >>> f16 = np.float16("0.1")
-       >>> f32 = np.float32(f16)
-       >>> f64 = np.float64(f32)
-       >>> f16 == f32 == f64
-       True
-       >>> f16, f32, f64
-       (0.1, 0.099975586, 0.0999755859375)
+   .. try_examples::
 
-   Note that none of these floats hold the exact value :math:`\frac{1}{10}`;
-   ``f16`` prints as ``0.1`` because it is as close to that value as possible,
-   whereas the other types do not as they have more precision and therefore have
-   closer values.
+      >>> import numpy as np
 
-   Conversely, floating-point scalars of different precisions which approximate
-   the same decimal value may compare unequal despite printing identically:
+      >>> f16 = np.float16("0.1")
+      >>> f32 = np.float32(f16)
+      >>> f64 = np.float64(f32)
+      >>> f16 == f32 == f64
+      True
+      >>> f16, f32, f64
+      (0.1, 0.099975586, 0.0999755859375)
 
-       >>> f16 = np.float16("0.1")
-       >>> f32 = np.float32("0.1")
-       >>> f64 = np.float64("0.1")
-       >>> f16 == f32 == f64
-       False
-       >>> f16, f32, f64
-       (0.1, 0.1, 0.1)
+      Note that none of these floats hold the exact value :math:`\frac{1}{10}`;
+      ``f16`` prints as ``0.1`` because it is as close to that value as possible,
+      whereas the other types do not as they have more precision and therefore have
+      closer values.
+
+      Conversely, floating-point scalars of different precisions which approximate
+      the same decimal value may compare unequal despite printing identically:
+
+      >>> f16 = np.float16("0.1")
+      >>> f32 = np.float32("0.1")
+      >>> f64 = np.float64("0.1")
+      >>> f16 == f32 == f64
+      False
+      >>> f16, f32, f64
+      (0.1, 0.1, 0.1)
 
 Floating-point types
 ~~~~~~~~~~~~~~~~~~~~
@@ -322,8 +326,6 @@ elements the data type consists of.)
 
 
 .. warning::
-
-   See :ref:`Note on string types<string-dtype-note>`.
 
    Numeric Compatibility: If you used old typecode characters in your
    Numeric code (which was never recommended), you will need to change

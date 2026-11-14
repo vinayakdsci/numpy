@@ -17,6 +17,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <structmember.h>
+#include <string.h>
 
 #include "numpy/ndarraytypes.h"
 #include "numpy/arrayobject.h"
@@ -343,11 +344,11 @@ get_fields_traverse_function(
 
     single_field_traverse_data *field = data->fields;
     for (i = 0; i < field_count; ++i) {
-        int offset;
+        npy_intp offset;
 
         key = PyTuple_GET_ITEM(names, i);
-        tup = PyDict_GetItem(dtype->fields, key);
-        if (!PyArg_ParseTuple(tup, "Oi|O", &fld_dtype, &offset, &title)) {
+        tup = PyDict_GetItem(dtype->fields, key); // noqa: borrowed-ref OK
+        if (!PyArg_ParseTuple(tup, "On|O", &fld_dtype, &offset, &title)) {
             NPY_AUXDATA_FREE((NpyAuxData *)data);
             return -1;
         }
@@ -398,13 +399,6 @@ subarray_traverse_data_free(NpyAuxData *data)
 }
 
 
-/*
- * We seem to be neither using nor exposing this right now, so leave it NULL.
- * (The implementation below should be functional.)
- */
-#define subarray_traverse_data_clone NULL
-
-#ifndef subarray_traverse_data_clone
 /* traverse data copy function */
 static NpyAuxData *
 subarray_traverse_data_clone(NpyAuxData *data)
@@ -426,7 +420,6 @@ subarray_traverse_data_clone(NpyAuxData *data)
 
     return (NpyAuxData *)newdata;
 }
-#endif
 
 
 static int
@@ -469,7 +462,7 @@ get_subarray_traverse_func(
 
     auxdata->count = size;
     auxdata->base.free = &subarray_traverse_data_free;
-    auxdata->base.clone = subarray_traverse_data_clone;
+    auxdata->base.clone = &subarray_traverse_data_clone;
 
     if (get_traverse_func(
             traverse_context, dtype, aligned,

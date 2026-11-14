@@ -2,21 +2,20 @@
 Tests for :mod:`numpy._core.numeric`.
 
 Does not include tests which fall under ``array_constructors``.
-
 """
 
-from __future__ import annotations
+from typing import Any
 
 import numpy as np
-import numpy.typing as npt
 
-class SubClass(npt.NDArray[np.float64]):
-    ...
+
+class SubClass(np.ndarray[tuple[Any, ...], np.dtype[np.float64]]): ...
+
 
 i8 = np.int64(1)
 
 A = np.arange(27).reshape(3, 3, 3)
-B: list[list[list[int]]] = A.tolist()
+B = A.tolist()
 C = np.empty((27, 27)).view(SubClass)
 
 np.count_nonzero(i8)
@@ -25,8 +24,8 @@ np.count_nonzero(B)
 np.count_nonzero(A, keepdims=True)
 np.count_nonzero(A, axis=0)
 
-np.isfortran(i8)
-np.isfortran(A)
+np.isfortran(i8)  # type: ignore[deprecated]
+np.isfortran(A)  # type: ignore[deprecated]
 
 np.argwhere(i8)
 np.argwhere(A)

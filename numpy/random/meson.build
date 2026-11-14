@@ -48,8 +48,14 @@ c_args_random = [
   cflags_large_file_support,
   '-DNPY_NO_DEPRECATED_API=0',  # Cython still uses old NumPy C API
 ]
+
 if host_machine.system() == 'cygwin'
   c_args_random += ['-Wl,--export-all-symbols']
+endif
+
+cython_args = []  
+if cy.version().version_compare('>=3.1.0')
+  cython_args += ['-Xfreethreading_compatible=True']
 endif
 
 # name, sources, extra c_args, extra static libs to link
@@ -83,6 +89,8 @@ foreach gen: random_pyx_sources
     link_with: gen[3],
     install: true,
     subdir: 'numpy/random',
+    cython_args: cython_args,
+    limited_api: py_limited_api,
   )
 endforeach
 
@@ -93,11 +101,14 @@ py.install_sources(
     '__init__.pxd',
     '__init__.py',
     '__init__.pyi',
+    '_bounded_integers.pyi',
     '_common.pxd',
+    '_common.pyi',
     '_generator.pyi',
     '_mt19937.pyi',
     '_pcg64.pyi',
     '_pickle.py',
+    '_pickle.pyi',
     '_philox.pyi',
     '_sfc64.pyi',
     'bit_generator.pxd',

@@ -18,8 +18,8 @@
 #include "iterators.h"
 #include "dtypemeta.h"
 #include "refcount.h"
-
 #include "npy_config.h"
+#include "templ_common.h" /* for npy_mul_sizes_with_overflow */
 
 
 
@@ -57,6 +57,53 @@ PyArray_ClearBuffer(
 
 
 /*
+ * Helper function to zero an array buffer.
+ *
+ * Here "zeroing" means an abstract zeroing operation, implementing the
+ * the behavior of `np.zeros`.  E.g. for an of references this is more
+ * complicated than zero-filling the buffer.
+ *
+ * Failure (returns -1) indicates some sort of programming or logical
+ * error and should not happen for a data type that has been set up
+ * correctly. In principle a sufficiently weird dtype might run out of
+ * memory but in practice this likely won't happen.
+ */
+NPY_NO_EXPORT int
+PyArray_ZeroContiguousBuffer(
+        PyArray_Descr *descr, char *data,
+        npy_intp stride, npy_intp size, int aligned)
+{
+    NPY_traverse_info zero_info;
+    NPY_traverse_info_init(&zero_info);
+    /* Flags unused: float errors do not matter and we do not release GIL */
+    NPY_ARRAYMETHOD_FLAGS flags_unused;
+    PyArrayMethod_GetTraverseLoop *get_fill_zero_loop =
+            NPY_DT_SLOTS(NPY_DTYPE(descr))->get_fill_zero_loop;
+    if (get_fill_zero_loop != NULL) {
+        if (get_fill_zero_loop(
+                    NULL, descr, aligned, descr->elsize, &(zero_info.func),
+                    &(zero_info.auxdata), &flags_unused) < 0) {
+            return -1;
+        }
+    }
+    else {
+        assert(zero_info.func == NULL);
+    }
+    if (zero_info.func == NULL) {
+        /* the multiply here should never overflow, since we already
+           checked if the new array size doesn't overflow */
+        memset(data, 0, size*stride);
+        return 0;
+    }
+
+    int res = zero_info.func(
+            NULL, descr, data, size, stride, zero_info.auxdata);
+    NPY_traverse_info_xfree(&zero_info);
+    return res;
+}
+
+
+/*
  * Helper function to clear whole array.  It seems plausible that we should
  * be able to get away with assuming the array is contiguous.
  *
@@ -77,7 +124,7 @@ PyArray_ClearBuffer(
      * and only arrays which own their memory should clear it.
      */
     int aligned = PyArray_ISALIGNED(arr);
-    if (PyArray_ISCONTIGUOUS(arr)) {
+    if (PyArray_ISCONTIGUOUS(arr) || PyArray_IS_F_CONTIGUOUS(arr)) {
         return PyArray_ClearBuffer(
                 descr, PyArray_BYTES(arr), descr->elsize,
                 PyArray_SIZE(arr), aligned);
@@ -105,10 +152,12 @@ PyArray_ClearBuffer(
         /* Process the innermost dimension */
         if (clear_info.func(NULL, clear_info.descr,
                 data_it, inner_shape, inner_stride, clear_info.auxdata) < 0) {
+            NPY_traverse_info_xfree(&clear_info);
             return -1;
         }
     } NPY_RAW_ITER_ONE_NEXT(idim, ndim, coord,
                             shape_it, data_it, strides_it);
+    NPY_traverse_info_xfree(&clear_info);
     return 0;
 }
 
@@ -134,14 +183,14 @@ PyArray_Item_INCREF(char *data, PyArray_Descr *descr)
     else if (PyDataType_HASFIELDS(descr)) {
         PyObject *key, *value, *title = NULL;
         PyArray_Descr *new;
-        int offset;
+        npy_intp offset;
         Py_ssize_t pos = 0;
 
-        while (PyDict_Next(PyDataType_FIELDS(descr), &pos, &key, &value)) {
+        while (PyDict_Next(PyDataType_FIELDS(descr), &pos, &key, &value)) { // noqa: borrowed-ref OK
             if (NPY_TITLE_KEY(key, value)) {
                 continue;
             }
-            if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset,
+            if (!PyArg_ParseTuple(value, "On|O", &new, &offset,
                                   &title)) {
                 return;
             }
@@ -196,14 +245,14 @@ PyArray_Item_XDECREF(char *data, PyArray_Descr *descr)
     else if (PyDataType_HASFIELDS(descr)) {
             PyObject *key, *value, *title = NULL;
             PyArray_Descr *new;
-            int offset;
+            npy_intp offset;
             Py_ssize_t pos = 0;
 
-            while (PyDict_Next(PyDataType_FIELDS(descr), &pos, &key, &value)) {
+            while (PyDict_Next(PyDataType_FIELDS(descr), &pos, &key, &value)) { // noqa: borrowed-ref OK
                 if (NPY_TITLE_KEY(key, value)) {
                     continue;
                 }
-                if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset,
+                if (!PyArg_ParseTuple(value, "On|O", &new, &offset,
                                       &title)) {
                     return;
                 }
@@ -430,14 +479,14 @@ _fill_with_none(char *optr, PyArray_Descr *dtype)
     else if (PyDataType_HASFIELDS(dtype)) {
         PyObject *key, *value, *title = NULL;
         PyArray_Descr *new;
-        int offset;
+        npy_intp offset;
         Py_ssize_t pos = 0;
 
-        while (PyDict_Next(PyDataType_FIELDS(dtype), &pos, &key, &value)) {
+        while (PyDict_Next(PyDataType_FIELDS(dtype), &pos, &key, &value)) { // noqa: borrowed-ref OK
             if (NPY_TITLE_KEY(key, value)) {
                 continue;
             }
-            if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset, &title)) {
+            if (!PyArg_ParseTuple(value, "On|O", &new, &offset, &title)) {
                 return -1;
             }
             if (_fill_with_none(optr + offset, new) < 0) {

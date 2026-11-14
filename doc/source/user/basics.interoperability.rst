@@ -45,17 +45,28 @@ encounter a foreign object, they will try (in order):
 
 1. The buffer protocol, described :py:doc:`in the Python C-API documentation
    <python:c-api/buffer>`.
-2. The ``__array_interface__`` protocol, described
-   :ref:`in this page <arrays.interface>`. A precursor to Python's buffer
-   protocol, it defines a way to access the contents of a NumPy array from other
-   C extensions.
+2. The NumPy array interface, exposed through the ``__array_struct__`` and
+   ``__array_interface__`` attributes and described
+   :ref:`here <arrays.interface>`. It predates the revised Python buffer
+   protocol (PEP 3118) and allows C extensions to access the contents of
+   array-like objects. NumPy checks ``__array_struct__`` before
+   ``__array_interface__``.
 3. The ``__array__()`` method, which asks an arbitrary object to convert
    itself into an array.
 
-For both the buffer and the ``__array_interface__`` protocols, the object
-describes its memory layout and NumPy does everything else (zero-copy if
-possible). If that's not possible, the object itself is responsible for
-returning a ``ndarray`` from ``__array__()``.
+For the buffer, ``__array_struct__``, and ``__array_interface__`` protocols, the
+object exposes its memory layout, which NumPy can use without copying when
+possible. Objects that cannot provide a suitable interface can instead implement
+``__array__()`` to return an ``ndarray``.
+
+If an object is not able to expose its data through ``__array_struct__`` or
+``__array_interface__``, it can define the corresponding attribute as a property
+that raises ``AttributeError``. NumPy then tries the next protocol in the order
+listed above, including ``__array__()`` if it is defined and neither interface
+is available. Other exceptions cause conversion to fail rather than falling
+back to ``__array__()``. Returning an invalid interface dictionary, such as
+one containing an unsupported ``typestr``, also causes conversion to fail
+without falling back to ``__array__()``.
 
 :doc:`DLPack <dlpack:index>` is yet another protocol to convert foreign objects
 to NumPy arrays in a language and device agnostic manner. NumPy doesn't implicitly
@@ -64,6 +75,18 @@ convert objects to ndarrays using DLPack. It provides the function
 and outputs a NumPy ndarray (which is generally a view of the input object's data
 buffer). The :ref:`dlpack:python-spec` page explains the ``__dlpack__`` protocol
 in detail.
+
+``dtype`` interoperability
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+Similar to ``__array__()`` for array objects, defining ``__numpy_dtype__``
+allows a custom dtype object to be interoperable with NumPy.
+The ``__numpy_dtype__`` must return a NumPy dtype instance (note that
+``np.float64`` is not a dtype instance, ``np.dtype(np.float64)`` is).
+
+.. versionadded:: 2.4
+   Before NumPy 2.4 a ``.dtype`` attribute was treated similarly. As of NumPy 2.4
+   both is accepted and implementing ``__numpy_dtype__`` prevents ``.dtype``
+   from being checked.
 
 The array interface protocol
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -118,7 +141,7 @@ We can check that ``arr`` and ``new_arr`` share the same data buffer:
 The ``__array__()`` method
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The ``__array__()`` method ensures that any NumPy-like object (an array, any
+The `__array__() <../reference/arrays.classes.html#numpy.class.\_\_array\_\_>`__ method ensures that any NumPy-like object (an array, any
 object exposing the array interface, an object whose ``__array__()`` method
 returns an array or any nested sequence) that implements it can be used as a
 NumPy array. If possible, this will mean using ``__array__()`` to create a NumPy
@@ -127,7 +150,7 @@ new ndarray object. This is not optimal, as coercing arrays into ndarrays may
 cause performance problems or create the need for copies and loss of metadata,
 as the original object and any attributes/behavior it may have had, is lost.
 
-The signature of the method should be ``__array__(self, dtype=None, copy=None)``.
+The signature of the method should be ``__array__(self, dtype=None, *, copy=None)``.
 If a passed ``dtype`` isn't ``None`` and different than the object's data type,
 a casting should happen to a specified type. If ``copy`` is ``None``, a copy
 should be made only if ``dtype`` argument enforces it. For ``copy=True``, a copy
@@ -136,9 +159,6 @@ is needed.
 
 If a class implements the old signature ``__array__(self)``, for ``np.array(a)``
 a warning will be raised saying that ``dtype`` and ``copy`` arguments are missing.
-
-To see an example of a custom array implementation including the use of
-``__array__()``, see :ref:`basics.dispatch`.
 
 The DLPack Protocol
 ~~~~~~~~~~~~~~~~~~~
@@ -204,7 +224,7 @@ The ``__array_ufunc__`` protocol
 A :ref:`universal function (or ufunc for short) <ufuncs-basics>` is a
 “vectorized” wrapper for a function that takes a fixed number of specific inputs
 and produces a fixed number of specific outputs. The output of the ufunc (and
-its methods) is not necessarily a ndarray, if not all input arguments are
+its methods) is not necessarily an ndarray, if not all input arguments are
 ndarrays. Indeed, if any input defines an ``__array_ufunc__`` method, control
 will be passed completely to that function, i.e., the ufunc is overridden. The
 ``__array_ufunc__`` method defined on that (non-ndarray) object has access to
@@ -274,10 +294,10 @@ Consider the following:
  >>> type(ser)
  pandas.core.series.Series
 
-Now, ``ser`` is **not** a ndarray, but because it
+Now, ``ser`` is **not** an ndarray, but because it
 `implements the __array_ufunc__ protocol
 <https://pandas.pydata.org/docs/user_guide/dsintro.html#dataframe-interoperability-with-numpy-functions>`__,
-we can apply ufuncs to it as if it were a ndarray:
+we can apply ufuncs to it as if it were an ndarray:
 
  >>> np.exp(ser)
     0     2.718282
@@ -463,7 +483,7 @@ Convert a PyTorch CPU tensor to NumPy array:
 
 The imported arrays are read-only so writing or operating in-place will fail:
 
- >>> x.flags.writeable
+ >>> x_np.flags.writeable
  False
  >>> x_np[1] = 1
  Traceback (most recent call last):
@@ -478,16 +498,19 @@ will mean duplicating the memory. Do not do this for very large arrays:
 
 .. note::
 
-  Note that GPU tensors can't be converted to NumPy arrays since NumPy doesn't
-  support GPU devices:
+  GPU tensors cannot be directly zero-copy converted to NumPy arrays since
+  NumPy does not support GPU devices. However, since DLPack v1, cross-device
+  copy is supported via the ``device`` parameter:
 
    >>> x_torch = torch.arange(5, device='cuda')
-   >>> np.from_dlpack(x_torch)
+   >>> np.from_dlpack(x_torch)  # fails: implicit device=None means same device
    Traceback (most recent call last):
      File "<stdin>", line 1, in <module>
    RuntimeError: Unsupported device in DLTensor.
+   >>> np.from_dlpack(x_torch, device='cpu')  # works: explicit copy to CPU
+   array([0, 1, 2, 3, 4])
 
-  But, if both libraries support the device the data buffer is on, it is
+  If both libraries support the device the data buffer is on, it is
   possible to use the ``__dlpack__`` protocol (e.g. PyTorch_ and CuPy_):
 
    >>> x_torch = torch.arange(5, device='cuda')

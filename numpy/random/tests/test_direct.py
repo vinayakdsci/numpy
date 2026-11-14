@@ -1,17 +1,28 @@
 import os
-from os.path import join
 import sys
+from os.path import join
 
-import numpy as np
-from numpy.testing import (assert_equal, assert_allclose, assert_array_equal,
-                           assert_raises)
 import pytest
 
+import numpy as np
 from numpy.random import (
-    Generator, MT19937, PCG64, PCG64DXSM, Philox, RandomState, SeedSequence,
-    SFC64, default_rng
+    MT19937,
+    PCG64,
+    PCG64DXSM,
+    SFC64,
+    Generator,
+    Philox,
+    RandomState,
+    SeedSequence,
+    default_rng,
 )
 from numpy.random._common import interface
+from numpy.testing import (
+    assert_allclose,
+    assert_array_equal,
+    assert_equal,
+    assert_raises,
+)
 
 try:
     import cffi  # noqa: F401
@@ -130,9 +141,11 @@ def gauss_from_uint(x, n, bits):
 
 
 def test_seedsequence():
-    from numpy.random.bit_generator import (ISeedSequence,
-                                            ISpawnableSeedSequence,
-                                            SeedlessSeedSequence)
+    from numpy.random.bit_generator import (
+        ISeedSequence,
+        ISpawnableSeedSequence,
+        SeedlessSeedSequence,
+    )
 
     s1 = SeedSequence(range(10), spawn_key=(1, 2), pool_size=6)
     s1.spawn(10)
@@ -168,6 +181,31 @@ def test_generator_spawning():
 
     # Sanity check that streams are actually different:
     assert new_rngs[0].uniform() != new_rngs[1].uniform()
+
+
+def test_spawn_negative_n_children():
+    """Test that spawn raises ValueError for negative n_children."""
+    from numpy.random.bit_generator import SeedlessSeedSequence
+
+    rng = np.random.default_rng(42)
+    seq = rng.bit_generator.seed_seq
+
+    # Test SeedSequence.spawn
+    with pytest.raises(ValueError, match="n_children must be non-negative"):
+        seq.spawn(-1)
+
+    # Test SeedlessSeedSequence.spawn
+    seedless = SeedlessSeedSequence()
+    with pytest.raises(ValueError, match="n_children must be non-negative"):
+        seedless.spawn(-1)
+
+    # Test BitGenerator.spawn
+    with pytest.raises(ValueError, match="n_children must be non-negative"):
+        rng.bit_generator.spawn(-1)
+
+    # Test Generator.spawn
+    with pytest.raises(ValueError, match="n_children must be non-negative"):
+        rng.spawn(-1)
 
 
 def test_non_spawnable():
@@ -231,6 +269,20 @@ class Base:
         assert uints is None
         uints = bit_generator.random_raw(1000, output=False)
         assert uints is None
+
+    def test_raw_tuple_size(self):
+        # Fixes a bug where random_raw computed the size
+        # incorrectly when a tuple was passed in. It uses sum rather than prod.
+        bit_generator = self.bit_generator(*self.data1['seed'])
+        state = bit_generator.state
+        bit_generator.random_raw((3, 5), output=False)
+        next_uint = bit_generator.random_raw()
+        bit_generator.state = state
+        _ = bit_generator.random_raw((3, 5), output=True)
+        assert bit_generator.random_raw() == next_uint
+
+        with pytest.raises(ValueError, match="negative dimensions are not allowed"):
+            bit_generator.random_raw((-1, 5), output=False)
 
     def test_gauss_inv(self):
         n = 25
@@ -392,6 +444,19 @@ class TestPhilox(Base):
                                    key=state['state']['key'])
         assert_state_equal(bit_generator.state, keyed.state)
 
+    def test_valid_buffer_position(self):
+        bit_generator = self.bit_generator(*self.data1['seed'])
+        state = bit_generator.state
+        original_position = state["buffer_pos"]
+        state["buffer_pos"] = 0
+        with pytest.raises(ValueError, match="buffer_pos must be between 1 and 4"):
+            bit_generator.state = state
+        state["buffer_pos"] = 5
+        with pytest.raises(ValueError, match="buffer_pos must be between 1 and 4"):
+            bit_generator.state = state
+        state["buffer_pos"] = original_position
+        bit_generator.state = state  # Should not raise
+
 
 class TestPCG64(Base):
     @classmethod
@@ -420,7 +485,7 @@ class TestPCG64(Base):
         assert val_neg == val_pos
         assert val_big == val_pos
 
-    def test_advange_large(self):
+    def test_advance_large(self):
         rs = Generator(self.bit_generator(38219308213743))
         pcg = rs.bit_generator
         state = pcg.state["state"]
@@ -430,7 +495,6 @@ class TestPCG64(Base):
         state = pcg.state["state"]
         advanced_state = 135275564607035429730177404003164635391
         assert state["state"] == advanced_state
-
 
 
 class TestPCG64DXSM(Base):
@@ -460,7 +524,7 @@ class TestPCG64DXSM(Base):
         assert val_neg == val_pos
         assert val_big == val_pos
 
-    def test_advange_large(self):
+    def test_advance_large(self):
         rs = Generator(self.bit_generator(38219308213743))
         pcg = rs.bit_generator
         state = pcg.state
@@ -507,6 +571,42 @@ class TestMT19937(Base):
         actual = rs.integers(2 ** 16)
         assert_equal(actual, desired)
 
+    def test_valid_state_pos(self):
+        # Ensures that buffer access after setting the state is valid for
+        # MT19937. The state position must be between 1 and 624 normally.
+        # After jumped, however, it can be 0, so we also allow this value.
+        bg = self.bit_generator(*self.data1['seed'])
+        state = bg.state
+        original_pos = state['state']['pos']
+        state['state']['pos'] = -1
+        with pytest.raises(
+            ValueError,
+            match='state position must be between 0 and 624'
+        ):
+            bg.state = state
+        state['state']['pos'] = 625
+        with pytest.raises(
+            ValueError,
+            match='state position must be between 0 and 624'
+        ):
+            bg.state = state
+        state['state']['pos'] = original_pos
+        bg.state = state  # Should not raise
+        assert bg.state['state']['pos'] == original_pos
+
+    def test_ordered_draws(self):
+        # Test that draws are ordered correctly when using the state tuple
+        rs = Generator(self.bit_generator(*self.data1['seed']))
+        bit_generator = rs.bit_generator
+        state = bit_generator.state
+        a, b = bit_generator.random_raw(2)
+        bit_generator.state = state
+        random_float64 = rs.random()
+        a = a >> 5
+        b = b >> 6
+        direct_float64 = (a * 67108864.0 + b) / 9007199254740992.0
+        assert_allclose(random_float64, direct_float64, rtol=1e-15, atol=0.0)
+
 
 class TestSFC64(Base):
     @classmethod
@@ -538,7 +638,7 @@ class TestSFC64(Base):
         )
 
         base_path = os.path.split(os.path.abspath(__file__))[0]
-        pkl_file = os.path.join(base_path, "data", f"sfc64_np126.pkl.gz")
+        pkl_file = os.path.join(base_path, "data", "sfc64_np126.pkl.gz")
         with gzip.open(pkl_file) as gz:
             sfc = pickle.load(gz)
 
@@ -559,3 +659,25 @@ class TestDefaultRNG:
         rg2 = default_rng(rg)
         assert rg2 is rg
         assert rg2.bit_generator is bg
+
+    @pytest.mark.thread_unsafe(
+        reason="np.random.set_bit_generator affects global state"
+    )
+    def test_coercion_RandomState_Generator(self):
+        # use default_rng to coerce RandomState to Generator
+        rs = RandomState(1234)
+        rg = default_rng(rs)
+        assert isinstance(rg.bit_generator, MT19937)
+        assert rg.bit_generator is rs._bit_generator
+
+        # RandomState with a non MT19937 bit generator
+        _original = np.random.get_bit_generator()
+        bg = PCG64(12342298)
+        np.random.set_bit_generator(bg)
+        rs = np.random.mtrand._rand
+        rg = default_rng(rs)
+        assert rg.bit_generator is bg
+
+        # vital to get global state back to original, otherwise
+        # other tests start to fail.
+        np.random.set_bit_generator(_original)

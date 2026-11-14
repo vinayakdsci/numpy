@@ -8,8 +8,8 @@
 
 #define RK_STATE_LEN 624
 
-#define N 624
-#define M 397
+#define _MT19937_N 624
+#define _MT19937_M 397
 #define MATRIX_A 0x9908b0dfUL
 #define UPPER_MASK 0x80000000UL
 #define LOWER_MASK 0x7fffffffUL
@@ -54,7 +54,8 @@ static inline uint32_t mt19937_next32(mt19937_state *state) {
 }
 
 static inline double mt19937_next_double(mt19937_state *state) {
-  int32_t a = mt19937_next(state) >> 5, b = mt19937_next(state) >> 6;
+  int32_t a = mt19937_next(state) >> 5;
+  int32_t b = mt19937_next(state) >> 6;
   return (a * 67108864.0 + b) / 9007199254740992.0;
 }
 
